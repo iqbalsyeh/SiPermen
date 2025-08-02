@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, Form, Depends
+from fastapi import FastAPI, Request, Form, Depends, UploadFile, File
 from fastapi.responses import RedirectResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
@@ -8,11 +8,16 @@ from passlib.hash import bcrypt
 from typing import List
 from utils.ocr import ocr_pdf_to_text
 from time import perf_counter
+from pathlib import Path
+
 
 import os
 import re
 import pytesseract
 import sqlite3
+import zipfile
+import tempfile
+import shutil
 import pandas as pd
 from datetime import datetime
 from pdf2image import convert_from_path
@@ -395,51 +400,64 @@ async def input_folder(request: Request, nomor_surat_tugas: str):
 @app.post("/proses-folder", response_class=HTMLResponse)
 async def proses_folder(
     request: Request,
-    folder_path: str = Form(...),
+    zip_file: UploadFile = File(...),
     nomor_surat_tugas: str = Form(...),
     instansi_terperiksa: str = Form(...)
 ):
+
+    # Simpan nomor surat tugas terakhir
     with open(LAST_ST_PATH, "w", encoding="utf-8") as f:
         f.write(nomor_surat_tugas)
 
+    # Cek user login
     user = request.session.get("user")
     if not user:
         return RedirectResponse(url="/login", status_code=302)
 
-    # Hitung jumlah file PDF
-    jumlah_file = sum(
-        len([f for f in files if f.lower().endswith('.pdf')])
-        for _, _, files in os.walk(folder_path)
-    )
+    # Buat direktori sementara
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_dir_path = Path(temp_dir)
 
-    # Mulai stopwatch
-    start_time = perf_counter()
+        # Simpan dan ekstrak ZIP
+        zip_path = temp_dir_path / zip_file.filename
+        with open(zip_path, "wb") as f:
+            content = await zip_file.read()
+            f.write(content)
 
-    # Pemeriksaan dimulai
-    hasil = scan_folder(folder_path, nomor_surat_tugas, instansi_terperiksa, user)
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall(temp_dir_path)
 
-    # Simpan hasil ke Excel
-    output_file = f"hasil_pemeriksaan_{nomor_surat_tugas.replace('/', '_')}.xlsx"
-    if os.path.exists(output_file):
-        os.remove(output_file)
-    simpan_ke_excel(hasil, output_file)
+        # Hitung jumlah file PDF
+        jumlah_file = sum(
+            len([f for f in files if f.lower().endswith('.pdf')])
+            for _, _, files in os.walk(temp_dir_path)
+        )
 
-    # Selesai stopwatch
-    durasi = round(perf_counter() - start_time, 2)
+        # Stopwatch mulai
+        start_time = perf_counter()
 
-    return templates.TemplateResponse("pemeriksaan.html", {
-        "request": request,
-        "hasil": hasil,
-        "file_excel": output_file,
-        "nomor_surat_tugas": nomor_surat_tugas,
-        "instansi_terperiksa": instansi_terperiksa,
-        "user": user,
-        "durasi": durasi,
-        "jumlah_file": jumlah_file
-    })
+        # Jalankan pemeriksaan
+        hasil = scan_folder(str(temp_dir_path), nomor_surat_tugas, instansi_terperiksa, user)
 
+        # Simpan ke Excel
+        output_file = f"hasil_pemeriksaan_{nomor_surat_tugas.replace('/', '_')}.xlsx"
+        if os.path.exists(output_file):
+            os.remove(output_file)
+        simpan_ke_excel(hasil, output_file)
 
+        # Stopwatch selesai
+        durasi = round(perf_counter() - start_time, 2)
 
+        return templates.TemplateResponse("pemeriksaan.html", {
+            "request": request,
+            "hasil": hasil,
+            "file_excel": output_file,
+            "nomor_surat_tugas": nomor_surat_tugas,
+            "instansi_terperiksa": instansi_terperiksa,
+            "user": user,
+            "durasi": durasi,
+            "jumlah_file": jumlah_file
+        })
 
 @app.get("/download")
 async def download_excel(file: str):
