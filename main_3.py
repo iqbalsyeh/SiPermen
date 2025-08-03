@@ -397,7 +397,7 @@ async def input_folder(request: Request, nomor_surat_tugas: str):
     })
 
 
-@app.post("/proses-folder", response_class=HTMLResponse)
+@app.post("/periksa-zip", response_class=HTMLResponse)
 async def proses_folder(
     request: Request,
     zip_file: UploadFile = File(...),
@@ -458,6 +458,10 @@ async def proses_folder(
             "durasi": durasi,
             "jumlah_file": jumlah_file
         })
+
+
+
+
 
 @app.get("/download")
 async def download_excel(file: str):
