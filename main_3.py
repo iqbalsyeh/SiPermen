@@ -463,9 +463,10 @@ async def proses_folder(
 async def download_excel(file: str):
     return FileResponse(file, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", filename=file)
 
-@app.get("/download/{filename}")
-async def download_file(filename: str):
-    file_path = f"static/{filename}"
+@app.get("/download-ocr/{filename}")
+async def download_txt(filename: str):
+    file_path = os.path.join("hasil_teks", filename)
     if os.path.exists(file_path):
-        return FileResponse(path=file_path, filename=filename, media_type='text/plain')
-    return {"error": "File not found"}
+        return FileResponse(file_path, media_type="text/plain", filename=filename)
+    return {"error": "File .txt tidak ditemukan"}
+
