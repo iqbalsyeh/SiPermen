@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request, Form, Depends, UploadFile, File
 from fastapi.responses import RedirectResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from starlette.middleware.sessions import SessionMiddleware
 from passlib.hash import bcrypt
 from typing import List
@@ -19,6 +19,9 @@ import zipfile
 import tempfile
 import shutil
 import pandas as pd
+import io
+import random
+import string
 from datetime import datetime
 from pdf2image import convert_from_path
 from PIL import Image
@@ -27,6 +30,8 @@ app = FastAPI()
 app.add_middleware(SessionMiddleware, secret_key="rahasia-anda")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
+
+hasil_txt_zip_buffer = None  # Simpan ZIP hasil OCR sementara di memori
 
 DB_PATH = "histori_pemeriksaan.db"
 LAST_ST_PATH = "last_st.txt"
@@ -222,9 +227,9 @@ def periksa_pdf(file_path: str) -> dict:
         "SPP": "Ada" if "SURAT PERMINTAAN PEMBAYARAN" in upper else "Tidak Ada",
         "SK": "Ada" if "KEPUTUSAN" in upper and all(k in text for k in ["Menimbang", "Mengingat", "Menetapkan"]) else "Tidak Ada",
         "SURAT_TUGAS": "Ada" if "SURAT TUGAS" in upper and any(k in upper for k in ["MENUGASKAN", "MEMBERI TUGAS"]) else "Tidak Ada",
-        "BAPP": "Ada" if "BERITA ACARA" in upper and "PENYELESAIAN PEKERJAAN" in upper else "Tidak Ada",
-        "BAST": "Ada" if "BERITA ACARA" in upper and "SERAH TERIMA" in upper else "Tidak Ada",
-        "BA_PEMBAYARAN": "Ada" if "BERITA ACARA" in upper and "PEMBAYARAN" in upper else "Tidak Ada",
+        "BAPP": "Ada" if "BERITA ACARA PENYELESAIAN PEKERJAAN" in upper else "Tidak Ada",
+        "BAST": "Ada" if "BERITA ACARA SERAH TERIMA" in upper else "Tidak Ada",
+        "BA_PEMBAYARAN": "Ada" if "BERITA ACARA PEMBAYARAN" in upper else "Tidak Ada",
         "SURAT_PERJANJIAN": "Ada" if "SURAT PERJANJIAN" in upper else "Tidak Ada",
         "KONTRAK": "Ada" if "KONTRAK" in upper else "Tidak Ada",
         "SPK": "Ada" if "SURAT PERINTAH KERJA" in upper else "Tidak Ada",
@@ -244,23 +249,30 @@ def periksa_pdf(file_path: str) -> dict:
         **detail_spm,
         **detail_daftar_sp2d,
         **detail_sp2d,
-        **detail_spp
+        **detail_spp,
+        "ocr_text": text
     }
 
 
 def scan_folder(folder_path: str, nomor_st: str, instansi_terperiksa: str, user: str) -> list:
     results = []
+    ocr_texts = {}
     for root, _, files in os.walk(folder_path):
         for file in files:
             if file.lower().endswith(".pdf"):
                 file_path = os.path.join(root, file)
+
                 hasil = periksa_pdf(file_path)
+
+                # Tambahkan metadata
                 hasil["user"] = user
                 hasil["nomor_surat_tugas"] = nomor_st
                 hasil["instansi_terperiksa"] = instansi_terperiksa
                 hasil["waktu"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-                # simpan histori
+                ocr_texts[file] = hasil.get("ocr_text", "")
+
+                # Simpan ke SQLite
                 conn = sqlite3.connect(DB_PATH)
                 c = conn.cursor()
                 c.execute("""
@@ -271,7 +283,8 @@ def scan_folder(folder_path: str, nomor_st: str, instansi_terperiksa: str, user:
                 conn.close()
 
                 results.append(hasil)
-    return results
+    return results, ocr_texts
+
 
 def simpan_ke_excel(data: list, output_name: str):
     df = pd.DataFrame(data)
@@ -404,6 +417,7 @@ async def proses_folder(
     nomor_surat_tugas: str = Form(...),
     instansi_terperiksa: str = Form(...)
 ):
+    global hasil_txt_zip_buffer  # Agar bisa digunakan saat download
 
     # Simpan nomor surat tugas terakhir
     with open(LAST_ST_PATH, "w", encoding="utf-8") as f:
@@ -414,11 +428,9 @@ async def proses_folder(
     if not user:
         return RedirectResponse(url="/login", status_code=302)
 
-    # Buat direktori sementara
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_dir_path = Path(temp_dir)
 
-        # Simpan dan ekstrak ZIP
         zip_path = temp_dir_path / zip_file.filename
         with open(zip_path, "wb") as f:
             content = await zip_file.read()
@@ -427,31 +439,36 @@ async def proses_folder(
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
             zip_ref.extractall(temp_dir_path)
 
-        # Hitung jumlah file PDF
         jumlah_file = sum(
             len([f for f in files if f.lower().endswith('.pdf')])
             for _, _, files in os.walk(temp_dir_path)
         )
 
-        # Stopwatch mulai
         start_time = perf_counter()
 
-        # Jalankan pemeriksaan
-        hasil = scan_folder(str(temp_dir_path), nomor_surat_tugas, instansi_terperiksa, user)
+        hasil, ocr_texts = scan_folder(str(temp_dir_path), nomor_surat_tugas, instansi_terperiksa, user)
 
-        # Simpan ke Excel
         output_file = f"hasil_pemeriksaan_{nomor_surat_tugas.replace('/', '_')}.xlsx"
         if os.path.exists(output_file):
             os.remove(output_file)
         simpan_ke_excel(hasil, output_file)
 
-        # Stopwatch selesai
+        # Simpan ZIP hasil OCR langsung ke memori
+        hasil_txt_zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(hasil_txt_zip_buffer, "w") as zf:
+            for item in hasil:
+                nama_file_txt = item["nama_file"].replace(".pdf", ".txt")
+                isi_ocr = item.get("ocr_text", "")
+                zf.writestr(nama_file_txt, isi_ocr)
+        hasil_txt_zip_buffer.seek(0)
+
         durasi = round(perf_counter() - start_time, 2)
 
         return templates.TemplateResponse("pemeriksaan.html", {
             "request": request,
             "hasil": hasil,
             "file_excel": output_file,
+            "file_txt_zip": True,  # Tanda bahwa ZIP ada
             "nomor_surat_tugas": nomor_surat_tugas,
             "instansi_terperiksa": instansi_terperiksa,
             "user": user,
@@ -461,8 +478,21 @@ async def proses_folder(
 
 
 
-
-
 @app.get("/download")
 async def download_excel(file: str):
     return FileResponse(file, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", filename=file)
+
+@app.get("/download_txt_zip")
+def download_txt_zip():
+    global hasil_txt_zip_buffer
+    if not hasil_txt_zip_buffer:
+        return HTMLResponse("Tidak ada file hasil OCR.", status_code=404)
+
+    hasil_txt_zip_buffer.seek(0)
+    return StreamingResponse(
+        hasil_txt_zip_buffer,
+        media_type="application/x-zip-compressed",
+        headers={"Content-Disposition": "attachment; filename=hasil_ocr.zip"}
+    )
+
+
