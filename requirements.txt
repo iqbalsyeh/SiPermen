@@ -9,3 +9,5 @@ openpyxl
 sqlalchemy
 python-multipart
 aiofiles
+itsdangerous
+
