@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request, Form, Depends, UploadFile, File
 from fastapi.responses import RedirectResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse
 from starlette.middleware.sessions import SessionMiddleware
 from passlib.hash import bcrypt
 from typing import List
@@ -13,7 +13,6 @@ from pathlib import Path
 
 import os
 import re
-import io
 import pytesseract
 import sqlite3
 import zipfile
@@ -223,9 +222,9 @@ def periksa_pdf(file_path: str) -> dict:
         "SPP": "Ada" if "SURAT PERMINTAAN PEMBAYARAN" in upper else "Tidak Ada",
         "SK": "Ada" if "KEPUTUSAN" in upper and all(k in text for k in ["Menimbang", "Mengingat", "Menetapkan"]) else "Tidak Ada",
         "SURAT_TUGAS": "Ada" if "SURAT TUGAS" in upper and any(k in upper for k in ["MENUGASKAN", "MEMBERI TUGAS"]) else "Tidak Ada",
-        "BAPP": "Ada" if "BERITA ACARA PENYELESAIAN PEKERJAAN" in upper else "Tidak Ada",
-        "BAST": "Ada" if "BERITA ACARA SERAH TERIMA" in upper else "Tidak Ada",
-        "BA_PEMBAYARAN": "Ada" if "BERITA ACARA PEMBAYARAN" in upper else "Tidak Ada",
+        "BAPP": "Ada" if "BERITA ACARA" in upper and "PENYELESAIAN PEKERJAAN" in upper else "Tidak Ada",
+        "BAST": "Ada" if "BERITA ACARA" in upper and "SERAH TERIMA" in upper else "Tidak Ada",
+        "BA_PEMBAYARAN": "Ada" if "BERITA ACARA" in upper and "PEMBAYARAN" in upper else "Tidak Ada",
         "SURAT_PERJANJIAN": "Ada" if "SURAT PERJANJIAN" in upper else "Tidak Ada",
         "KONTRAK": "Ada" if "KONTRAK" in upper else "Tidak Ada",
         "SPK": "Ada" if "SURAT PERINTAH KERJA" in upper else "Tidak Ada",
@@ -460,20 +459,10 @@ async def proses_folder(
             "jumlah_file": jumlah_file
         })
 
+
+
+
+
 @app.get("/download")
 async def download_excel(file: str):
     return FileResponse(file, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", filename=file)
-
-@app.get("/download-txt")
-async def download_txt(folder: str = "hasil_teks"):
-    # Buat ZIP dari semua file .txt di folder
-    zip_buffer = io.BytesIO()
-    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-        for filename in os.listdir(folder):
-            if filename.endswith(".txt"):
-                file_path = os.path.join(folder, filename)
-                zip_file.write(file_path, arcname=filename)
-    zip_buffer.seek(0)
-    return StreamingResponse(zip_buffer, media_type="application/zip", headers={
-        "Content-Disposition": f"attachment; filename=hasil_ocr_teks.zip"
-    })
