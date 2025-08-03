@@ -10,4 +10,6 @@ sqlalchemy
 python-multipart
 aiofiles
 itsdangerous
+passlib[bcrypt]
+
 
