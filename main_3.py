@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request, Form, Depends, UploadFile, File
 from fastapi.responses import RedirectResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from starlette.middleware.sessions import SessionMiddleware
 from passlib.hash import bcrypt
 from typing import List
@@ -13,6 +13,7 @@ from pathlib import Path
 
 import os
 import re
+import io
 import pytesseract
 import sqlite3
 import zipfile
@@ -463,10 +464,16 @@ async def proses_folder(
 async def download_excel(file: str):
     return FileResponse(file, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", filename=file)
 
-@app.get("/download-ocr/{filename}")
-async def download_txt(filename: str):
-    file_path = os.path.join("hasil_teks", filename)
-    if os.path.exists(file_path):
-        return FileResponse(file_path, media_type="text/plain", filename=filename)
-    return {"error": "File .txt tidak ditemukan"}
-
+@app.get("/download-txt")
+async def download_txt(folder: str = "hasil_teks"):
+    # Buat ZIP dari semua file .txt di folder
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+        for filename in os.listdir(folder):
+            if filename.endswith(".txt"):
+                file_path = os.path.join(folder, filename)
+                zip_file.write(file_path, arcname=filename)
+    zip_buffer.seek(0)
+    return StreamingResponse(zip_buffer, media_type="application/zip", headers={
+        "Content-Disposition": f"attachment; filename=hasil_ocr_teks.zip"
+    })
