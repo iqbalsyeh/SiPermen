@@ -222,9 +222,9 @@ def periksa_pdf(file_path: str) -> dict:
         "SPP": "Ada" if "SURAT PERMINTAAN PEMBAYARAN" in upper else "Tidak Ada",
         "SK": "Ada" if "KEPUTUSAN" in upper and all(k in text for k in ["Menimbang", "Mengingat", "Menetapkan"]) else "Tidak Ada",
         "SURAT_TUGAS": "Ada" if "SURAT TUGAS" in upper and any(k in upper for k in ["MENUGASKAN", "MEMBERI TUGAS"]) else "Tidak Ada",
-        "BAPP": "Ada" if "BERITA ACARA" in upper and "PENYELESAIAN PEKERJAAN" in upper else "Tidak Ada",
-        "BAST": "Ada" if "BERITA ACARA" in upper and "SERAH TERIMA" in upper else "Tidak Ada",
-        "BA_PEMBAYARAN": "Ada" if "BERITA ACARA" in upper and "PEMBAYARAN" in upper else "Tidak Ada",
+        "BAPP": "Ada" if "BERITA ACARA PENYELESAIAN PEKERJAAN" in upper else "Tidak Ada",
+        "BAST": "Ada" if "BERITA ACARA SERAH TERIMA" in upper else "Tidak Ada",
+        "BA_PEMBAYARAN": "Ada" if "BERITA ACARA PEMBAYARAN" in upper else "Tidak Ada",
         "SURAT_PERJANJIAN": "Ada" if "SURAT PERJANJIAN" in upper else "Tidak Ada",
         "KONTRAK": "Ada" if "KONTRAK" in upper else "Tidak Ada",
         "SPK": "Ada" if "SURAT PERINTAH KERJA" in upper else "Tidak Ada",
@@ -459,10 +459,13 @@ async def proses_folder(
             "jumlah_file": jumlah_file
         })
 
-
-
-
-
 @app.get("/download")
 async def download_excel(file: str):
     return FileResponse(file, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", filename=file)
+
+@app.get("/download/{filename}")
+async def download_file(filename: str):
+    file_path = f"static/{filename}"
+    if os.path.exists(file_path):
+        return FileResponse(path=file_path, filename=filename, media_type='text/plain')
+    return {"error": "File not found"}
