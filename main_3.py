@@ -162,10 +162,11 @@ def extract_detail_sp2d(text: str) -> dict:
             rekening = rekening_match.group(0)
             rekening_pos = rekening_match.end()
             sisa_text = text[rekening_pos:][:100]
-            
-        bank_match = re.search(r'BANK.*', sisa_text, re.IGNORECASE)
-        if bank_match:
-            bank = bank_match.group(0).strip()
+        
+            bank_match = re.search(r'BANK.*', sisa_text, re.IGNORECASE)
+            if bank_match:
+                bank = bank_match.group(0).strip()
+
 
         jumlah_match = re.search(r'Jumlah yang dibayarkan\s*Rp[.: ]*\s*([\d\.]+,\d{2})', text, re.IGNORECASE)
         if jumlah_match:
